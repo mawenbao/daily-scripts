@@ -1,0 +1,85 @@
+#!/bin/bash
+# @author: mwenbao@gmail.com
+# @date: 2015-05-15
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON_HOME="/home/wilbur/app/dnscrypt-wrapper"
+DAEMON="dnscrypt-wrapper"
+NAME="${DAEMON}"
+DESC="dnscrypt wrapper"
+PID_FILE="/var/run/${NAME}.pid"
+
+DETAIL_LOG="-VV > /var/log/dnscrypt-wrapper.log"
+DNS_UPSTREAM="8.8.8.8:53"
+DNS_LOCAL="0.0.0.0:1990"
+PROVIDER_NAME="2.dnscrypt-cert.atime.1990"
+
+set -e
+
+get_pgid() {
+    serv_gid=`ps -e -opgid,command | grep ${NAME} | grep -v grep | awk '{print $1}' | head -n1`
+    if [[ ${serv_gid} ]]; then
+        echo -${serv_gid}
+    fi
+}
+
+get_pid() {
+    echo `ps -e -opid,command | grep ${NAME} | grep -v grep | awk '{print $1}' | sort -n | head -n1`
+}
+
+start() {
+    echo "Starting ${DESC}..."
+    start-stop-daemon --pidfile ${PID_FILE} --start --quiet --background -m \
+        --exec ${DAEMON_HOME}/${DAEMON} -- \
+        -r ${DNS_UPSTREAM} -a ${DNS_LOCAL} \
+        --crypt-secretkey-file=${DAEMON_HOME}/crypt_secret.key \
+        --crypt-publickey-file=${DAEMON_HOME}/crypt_public.key \
+        --provider-cert-file=${DAEMON_HOME}/dnscrypt.cert \
+        --provider-name=${PROVIDER_NAME}
+    sleep 1
+    pgid=`get_pgid`
+    if [[ ! ${pgid} ]]; then
+        echo "Failed to start ${DESC}, please check logs"
+        exit 1
+    fi
+}
+
+stop() {
+    echo "Stopping ${DESC}..."
+    start-stop-daemon --pidfile ${PID_FILE} --stop --quiet
+}
+
+status() {
+    pid=`get_pid`
+    if [[ ${pid} ]]; then
+        pstree -a ${pid}
+    else
+        echo "${DESC} is not running"
+    fi
+}
+
+case "${1}" in
+    start)
+    start
+    ;;
+
+    stop)
+    stop
+    ;;
+
+    restart)
+    stop
+    start
+    ;;
+
+    status)
+    status
+    ;;
+
+    *)
+    echo "Usage: service  {start|stop|restart|status}" >&2
+    exit 1
+    ;;
+esac
+
+exit 0
