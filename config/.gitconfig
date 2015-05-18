@@ -1,0 +1,26 @@
+[user]
+	name = mawenbao
+	email = mwenbao@gmail.com
+[core]
+	excludesfile = ~/.gitignore
+	quotepath = false
+[alias]
+	br = branch
+	st = status
+	last = log --pretty=oneline -1 HEAD
+	co = checkout
+	comend = commit --amend
+	df = difftool
+	glog = log --graph --date=iso --pretty=tformat:'%ad %h %s'
+	unstage = reset HEAD
+[http]
+	postBuffer = 5242880
+    #proxy = socks5://localhost:1791
+[giggle]
+	main-window-maximized = true
+	main-window-geometry = 0x0+0+0
+	history-view-vpane-position = 358
+	main-window-view = FileView
+	file-view-vpane-position = 485
+[push]
+	default = simple
