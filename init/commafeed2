@@ -1,0 +1,83 @@
+#!/bin/bash
+# @author: mwenbao@gmail.com
+# @date: 2015-05-15
+
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON_HOME="/home/wilbur/www/app/commafeed.2x"
+NAME="commafeed"
+DESC="commafeed2.1.0"
+PID_FILE="/var/run/${NAME}.pid"
+
+set -e
+
+. /lib/init/vars.sh
+. /lib/lsb/init-functions
+
+start() {
+    start-stop-daemon --pidfile ${PID_FILE} --start --quiet --background -m \
+        --exec /usr/bin/java -- \
+        -Djava.net.preferIPv4Stack=true -jar ${DAEMON_HOME}/commafeed.jar server ${DAEMON_HOME}/config.yml \
+        || return 1
+}
+
+stop() {
+    start-stop-daemon --pidfile ${PID_FILE} --stop --quiet
+    RETVAL="$?"
+    sleep 1
+    return "${RETVAL}"
+}
+
+status() {
+    pid=`cat ${PID_FILE}`
+    if [[ ${pid} ]]; then
+        pstree -a ${pid}
+    else
+        echo "${DESC} is not running"
+    fi
+}
+
+case "${1}" in
+    start)
+        log_daemon_msg "Starting" "${NAME}"
+        start
+        case "$?" in
+            0) log_end_msg 0 ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    stop)
+        log_daemon_msg "Stopping" "${NAME}"
+        stop
+        case "$?" in
+            0|1) log_end_msg 0 ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    restart)
+        log_daemon_msg "Restarting" "${NAME}"
+        stop
+        case "$?" in
+            0) 
+                start 
+                case "$?" in
+                    0) log_end_msg 0 ;;
+                    1) log_end_msg 1 ;;
+                esac
+                ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    status)
+        status
+        ;;
+
+    *)
+        echo "Usage: service  {start|stop|restart|status}" >&2
+        exit 1
+    ;;
+esac
+
+exit 0
