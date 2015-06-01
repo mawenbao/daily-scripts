@@ -11,7 +11,7 @@
 	co = checkout
 	comend = commit --amend
 	df = difftool
-	glog = log --graph --date=iso --pretty=tformat:'%ad %h %s'
+	glog = log --graph --date=iso --pretty=tformat:'%ad %h%d %s'
 	unstage = reset HEAD
 [http]
 	postBuffer = 5242880
