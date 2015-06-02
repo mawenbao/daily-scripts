@@ -1,0 +1,85 @@
+#!/bin/sh
+# @author: mwenbao@gmail.com
+# @date: 2015-05-15
+
+MYGOPATH="/home/wilbur/lib/go"
+MYGOROOT="/home/wilbur/app/go"
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:${MYGOROOT}/bin
+DAEMON="${MYGOPATH}/bin/revel"
+NAME="leanote"
+DESC="${NAME}"
+PID_FILE="/var/run/${NAME}.pid"
+
+. /lib/init/vars.sh
+. /lib/lsb/init-functions
+
+start() {
+    [ -f ${PID_FILE} ] && return 1
+    GOROOT=${MYGOROOT} GOPATH=${MYGOPATH} start-stop-daemon --pidfile ${PID_FILE} --start -C --quiet --background -m \
+        --exec ${DAEMON} -- run github.com/leanote/leanote prod \
+        || return 1
+}
+
+stop() {
+    [ -f ${PID_FILE} ] || return 1
+    pkill -9 -P `cat ${PID_FILE}`
+    RETVAL="$?"
+    rm ${PID_FILE}
+    sleep 1
+    return "${RETVAL}"
+}
+
+status() {
+    pid=`cat ${PID_FILE}`
+    if [ -f ${pid} ]; then
+        pstree -a ${pid}
+    else
+        echo "${DESC} is not running"
+    fi
+}
+
+case "${1}" in
+    start)
+        log_daemon_msg "Starting" "${NAME}"
+        start
+        case "$?" in
+            0) log_end_msg 0 ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    stop)
+        log_daemon_msg "Stopping" "${NAME}"
+        stop
+        case "$?" in
+            0|1) log_end_msg 0 ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    restart)
+        log_daemon_msg "Restarting" "${NAME}"
+        stop
+        case "$?" in
+            0) 
+                start 
+                case "$?" in
+                    0) log_end_msg 0 ;;
+                    1) log_end_msg 1 ;;
+                esac
+                ;;
+            1) log_end_msg 1 ;;
+        esac
+        ;;
+
+    status)
+        status
+        ;;
+
+    *)
+        echo "Usage: service  {start|stop|restart|status}" >&2
+        exit 1
+    ;;
+esac
+
+exit 0
