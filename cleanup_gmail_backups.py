@@ -4,7 +4,7 @@
 # date: 2015.06.03
 # desc: Move old backup gmails to trash.
 # depend: python2.7
-#         gmail python api
+#         gmail python api: pip install --upgrade google-api-python-client
 
 import os
 import sys
