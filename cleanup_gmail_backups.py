@@ -15,6 +15,7 @@ from datetime import datetime
 
 from apiclient.discovery import build
 from apiclient import errors
+from apiclient.http import BatchHttpRequest
 from httplib2 import Http
 import oauth2client
 from oauth2client import client
@@ -166,6 +167,52 @@ def find_expired_emails(mails):
     reserv_mids = dict.fromkeys(reserv_mails.values())
     return [m for m in mails if m.mid not in reserv_mids]
 
+def generate_mymails(service, mailobjs):
+    '''Get mail details using batch http request and return as MyBackupEmail.
+    '''
+    if not mailobjs:
+        return
+
+    mymails = []
+    def cb(reqid, resp, exception):
+        if exception is not None:
+            logging.error('Got error when requesting mail details: %s', exception)
+        else:
+            myml = MyBackupEmail()
+            if myml.update(resp):
+                mymails.append(myml)
+
+    batchreq = BatchHttpRequest(callback=cb)
+    for mail in mailobjs:
+        batchreq.add(service.users().messages().get(userId='me', id=mail['id']))
+    batchreq.execute()
+    return mymails
+
+def trash_expired_emails(service, mymails):
+    '''Move expired gmails to trash using batch http request.
+    '''
+    if not mymails:
+        return
+
+    mailmap = {}
+    exmails = find_expired_emails(mymails)
+    if not exmails:
+        return
+
+    def cb(reqid, resp, exception):
+        if exception is not None:
+            logging.error('Got error when trashing gmails: %s', exception)
+        elif TRASH_LABEL in resp['labelIds']:
+            logging.warn('Successfully trashed mail: %s', mailmap[resp['id']].subject)
+        else:
+            logging.error('Failed to trash mail: %s', mailmap[resp['id']].subject)
+
+    batchreq = BatchHttpRequest(callback=cb)
+    for mail in exmails:
+        batchreq.add(service.users().messages().trash(userId='me', id=mail.mid))
+        mailmap[mail.mid] = mail
+    batchreq.execute()
+
 def main(flags):
     # setup logging
     logging.basicConfig(filename=flags.logging_file, format=LOGGING_FORMAT, level=flags.logging_level)
@@ -185,21 +232,13 @@ def main(flags):
     if not mailobjs:
         logging.error('No mails found for label(id): %s', labelid)
         return 1
-    mymails = []
-    for mail in mailobjs:
-        msg = service.users().messages().get(userId='me', id=mail['id']).execute()
-        myml = MyBackupEmail()
-        if not myml.update(msg):
-            continue
-        mymails.append(myml)
 
-    # moved expired mails to trash
-    for mail in find_expired_emails(mymails):
-        msg = service.users().messages().trash(userId='me', id=mail.mid).execute()
-        if msg['id'] == mail.mid and TRASH_LABEL in msg['labelIds']:
-            logging.warn('Successfully trashed mail: %s', mail.subject)
-        else:
-            logging.error('Failed to trash mail: %s', mail.subject)
+    # find email details
+    mymails = generate_mymails(service, mailobjs)
+
+    # trash expired emails
+    trash_expired_emails(service, mymails)
+
     return 0
 
 if __name__ == '__main__':
