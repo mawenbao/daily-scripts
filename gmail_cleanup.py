@@ -1,17 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 # author: mwenbao@gmail.com
-# date: 2015.06.03
-# desc: Move old backup gmails to trash.
-# depend: python2.7
-#         gmail python api: pip install --upgrade google-api-python-client
+# date: 2015.06.03 - 2015.06.09
+# desc: Move old gmails with given labels to trash.
+#       Old gmails are defined by the function `find_expired_email'
+# depends: python2.7
+#          gmail python api: pip install --upgrade google-api-python-client
 
 import os
 import sys
-import re
 import argparse
 import logging
+import time
 from datetime import datetime
+import email.utils
 
 from apiclient.discovery import build
 from apiclient import errors
@@ -23,19 +25,17 @@ from oauth2client import tools
 
 LOGGING_FORMAT = '[%(levelname)s] [%(asctime)-15s] %(message)s'
 TRASH_LABEL = 'TRASH'
-BACKUP_LABEL = 'host-backup'
-DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
-MAIL_DATE_REG = re.compile(r'[1-9][0-9]{3}-[0-9]{2}-[0-9]{2} [0-2][0-9]:[0-6][0-9]:[0-6][0-9]')
 
 SCOPES = 'https://www.googleapis.com/auth/gmail.modify'
-APPLICATION_NAME = 'Cleanup Gmail Backups'
+APPLICATION_NAME = 'gmail-cleanup'
 
 
 class MyBackupEmail(object):
     def __init__(self):
         self.mid = ''
         self.subject = u''
-        self.datetime = None
+        self.sender = u''
+        self.datetime = None  # represented in the email date's tz
 
     def __str__(self):
         return '{} {} {}'.format(self.datetime, self.mid, self.subject)
@@ -43,41 +43,52 @@ class MyBackupEmail(object):
     def __repr__(self):
         return self.__str__()
 
-    def __parse_datetime(self):
-        '''Parse date and time from mail subject.
+    def _parse_datetime(self, datestr):
+        '''Parse email's date.
         '''
-        try:
-            datels = MAIL_DATE_REG.findall(self.subject)
-            if not datels:
-                logging.error('Failed to match datetime string in mail subject: %s', self.subject)
-                return False
-            self.datetime = datetime.strptime(datels[0], DATE_FORMAT)
-        except ValueError, e:
-            logging.error('Failed to parse datetime string: %s', e)
+        datetuple = email.utils.parsedate(datestr)
+        if datetuple is None:
+            logging.error('Failed to parse email date: %s', datestr)
             return False
+        self.datetime = datetime.fromtimestamp(time.mktime(datetuple))
         return True
 
     def update(self, msg):
         '''Set mail id, subject and datetime.
         '''
         self.mid = msg['id']
+        datestr = u''
         for header in msg['payload']['headers']:
             if header['name'] == u'Subject':
                 self.subject = header['value']
+            if header['name'] == u'From':
+                self.sender = header['value']
+            if header['name'] == u'Date':
+                datestr = header['value']
+            if self.subject and self.sender and datestr:
                 break
         if not self.subject:
             logging.error("No subject found in email %s's headers", self.mid)
             return False
-        if not self.__parse_datetime():
+        if not self.sender:
+            logging.error("No sender address in email %s's headers", self.mid)
+            return False
+        if not datestr:
+            logging.error("No date found in email %s's headers", self.mid)
+            return False
+        if not self._parse_datetime(datestr):
             return False
         return True
 
 def parse_cmd_args():
     parser = argparse.ArgumentParser(parents=[tools.argparser])
     parser.add_argument('--logging_file', default='',
-            help='Location of the log file.')
+        help='Location of the log file.')
     parser.add_argument('--secret_file', default='client_secret.json',
-            help='Location of the secret file.')
+        help='Location of the secret file.')
+    parser.add_argument('--sender_sensitive', action='store_true',
+        help="Treat different senders' emails within the same label seperately.")
+    parser.add_argument('label', nargs='+', help='Gmail labels')
     return parser.parse_args()
 
 def get_credentials(flags):
@@ -94,7 +105,7 @@ def get_credentials(flags):
     if not os.path.exists(credential_dir):
         os.makedirs(credential_dir)
     credential_path = os.path.join(credential_dir,
-                                   'cleanup-gmail-backups.json')
+                                   'gmail-cleanup.json')
 
     store = oauth2client.file.Storage(credential_path)
     credentials = store.get()
@@ -108,33 +119,41 @@ def get_credentials(flags):
         print 'Storing credentials to ' + credential_path
     return credentials
 
-def find_label_id(service, name):
-    """Find label id according to its name.
+def lookup_label_id(service, labels):
+    """Lookup gmail label id according to their names.
     """
-
-    label_id = ''
-    results = service.users().labels().list(userId='me').execute()
-    labels = results.get('labels', [])
     if not labels:
-        logging.error('No lables found')
-        return ''
-    for label in labels:
-        if label['name'] == name:
-            label_id = label['id']
-            break
-    return label_id
+        return
 
-def find_emails_by_labelid(service, labelids):
-    """Find all the emails tagged with labels(id).
+    labelids = []
+    def cb(reqid, resp, exception):
+        if exception is not None:
+            logging.error('Got error when requesting email label id: %s', exception)
+            return
+        mylabs = resp.get('labels', [])
+        if not mylabs:
+            logging.error('Label not found: %s', labels[int(reqid)])
+            return
+        for lab in mylabs:
+            if lab['name'] in labels:
+                labelids.append(lab['id'])
 
-    Results are sort by date desc.
-    """
+    batchreq = BatchHttpRequest(callback=cb)
+    for i in range(len(labels)):
+        batchreq.add(service.users().labels().list(userId='me'), request_id=str(i))
+    batchreq.execute()
+    return labelids
 
-    results = service.users().messages().list(
-        userId='me', labelIds=labelids).execute()
+def lookup_email_id(service, labelids):
+    '''Lookup gmail message id according to their label(id)s.
+    '''
+    if not labelids:
+        return
+
+    results = service.users().messages().list(userId='me', labelIds=labelids).execute()
     return results.get('messages', [])
 
-def find_expired_emails(mails):
+def find_expired_email(mails):
     """Find all the emails which should be moved to gmail trash.
 
     Reserved mails:
@@ -167,7 +186,7 @@ def find_expired_emails(mails):
     reserv_mids = dict.fromkeys(reserv_mails.values())
     return [m for m in mails if m.mid not in reserv_mids]
 
-def generate_mymails(service, mailobjs):
+def get_email_detail(service, mailobjs):
     '''Get mail details using batch http request and return as MyBackupEmail.
     '''
     if not mailobjs:
@@ -188,29 +207,29 @@ def generate_mymails(service, mailobjs):
     batchreq.execute()
     return mymails
 
-def trash_expired_emails(service, mymails):
+def trash_expired_email(service, mymails):
     '''Move expired gmails to trash using batch http request.
     '''
     if not mymails:
         return
 
-    mailmap = {}
-    exmails = find_expired_emails(mymails)
+    exmails = find_expired_email(mymails)
     if not exmails:
         return
 
     def cb(reqid, resp, exception):
+        i = int(reqid)
         if exception is not None:
             logging.error('Got error when trashing gmails: %s', exception)
-        elif TRASH_LABEL in resp['labelIds']:
-            logging.warn('Successfully trashed mail: %s', mailmap[resp['id']].subject)
+        elif exmails[i].mid == resp['id'] and TRASH_LABEL in resp['labelIds']:
+            logging.warn('Successfully trashed mail: %s, received at UTC %s',
+                exmails[i].subject, exmails[i].datetime)
         else:
-            logging.error('Failed to trash mail: %s', mailmap[resp['id']].subject)
+            logging.error('Failed to trash mail: %s', exmails[i].subject)
 
     batchreq = BatchHttpRequest(callback=cb)
-    for mail in exmails:
-        batchreq.add(service.users().messages().trash(userId='me', id=mail.mid))
-        mailmap[mail.mid] = mail
+    for i in range(len(exmails)):
+        batchreq.add(service.users().messages().trash(userId='me', id=exmails[i].mid), request_id=str(i))
     batchreq.execute()
 
 def main(flags):
@@ -221,30 +240,44 @@ def main(flags):
     credentials = get_credentials(flags)
     service = build('gmail', 'v1', http=credentials.authorize(Http()))
 
-    # find label id
-    labelid = find_label_id(service, BACKUP_LABEL)
-    if not labelid:
-        logging.error('Label %s not found', BACKUP_LABEL)
-        return 1
+    for label in flags.label:
+        # lookup label id first
+        labelids = lookup_label_id(service, [label])
+        if not labelids:
+            logging.error('Label not found: %s', label)
+            return 1
 
-    # find all emails tagged with label(id)
-    mailobjs = find_emails_by_labelid(service, [labelid])
-    if not mailobjs:
-        logging.error('No mails found for label(id): %s', labelid)
-        return 1
+        # find emails with given labels
+        mailobjs = lookup_email_id(service, labelids)
+        if not mailobjs:
+            logging.error('No email was tagged with any of the labels: %s', ' '.join(flags.label))
+            return 1
+        mymails = get_email_detail(service, mailobjs)
 
-    # find email details
-    mymails = generate_mymails(service, mailobjs)
-
-    # trash expired emails
-    trash_expired_emails(service, mymails)
+        # trash expired emails
+        if not flags.sender_sensitive:
+            trash_expired_email(service, mymails)
+        else:
+            # group emails according to sender's email address
+            grpmails = {}
+            for m in mymails:
+                if m.sender not in grpmails:
+                    grpmails[m.sender] = []
+                grpmails[m.sender].append(m)
+            for submails in grpmails.values():
+                trash_expired_email(service, submails)
 
     return 0
 
 if __name__ == '__main__':
+    ret = 0
     try:
-        sys.exit(main(parse_cmd_args()))
+        ret = main(parse_cmd_args())
     except errors.HttpError, error:
         logging.error('Error: %s', error)
         sys.exit(1)
+    except:
+        logging.exception('Unknown error')
+        sys.exit(1)
+    sys.exit(ret)
 
