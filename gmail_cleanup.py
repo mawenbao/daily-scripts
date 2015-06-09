@@ -31,11 +31,11 @@ APPLICATION_NAME = 'gmail-cleanup'
 
 
 class MyBackupEmail(object):
-    def __init__(self):
-        self.mid = ''
-        self.subject = u''
-        self.sender = u''
-        self.datetime = None  # represented in the email date's tz
+    def __init__(self, mid='', subject=u'', sender='', dt=None):
+        self.mid = mid
+        self.subject = subject
+        self.sender = sender
+        self.datetime = dt  # represented in the email date's tz
 
     def __str__(self):
         return '{} {} {}'.format(self.datetime, self.mid, self.subject)
@@ -148,31 +148,31 @@ def find_expired_email(mails):
     """Find all the emails which should be moved to gmail trash.
 
     Reserved mails:
-        1. (7) sent in this month.
+        1. (7) recent 7 mails.
         2. (*) sent in the last months(one mail per month).
         3. (*) sent in the last years(one mail per year).
     """
-    today = datetime.now().date()
-    reserv_mails = {} # year|month|date => mail.mid
-    num_month_mails = 0 # number of mails sent this month
+    if not mails:
+        return []
+
+    # get a copy of mails sort by datetime in desc order first
+    mails_date = sorted(mails, key=lambda m:m.datetime, reverse=True)
+    last7mails = mails_date[:7]
+    bmail = last7mails[-1]
+    # year|month|date => mail.mid
+    reserv_mails = { m.datetime:m.mid for m in last7mails }
     def reserv_m(key, mail):
         if not reserv_mails.has_key(key):
             reserv_mails[key] = mail.mid
 
-    # get a copy of mails sort by datetime in desc order first
-    for mail in sorted(mails, key=lambda m:m.datetime, reverse=True):
-        if mail.datetime.year != today.year:
+    for mail in mails_date[7:]:
+        if mail.datetime.year < bmail.datetime.year:
             # mails sent in the last years, keep the newest mail per year
             reserv_m(mail.datetime.year, mail)
-        elif mail.datetime.month != today.month:
+        elif mail.datetime.year == bmail.datetime.year and \
+                mail.datetime.month < bmail.datetime.month:
             # mails sent in the last months, keep the newest mail per month
             reserv_m(mail.datetime.month, mail)
-        elif num_month_mails < 7:
-            # mails sent in this month, keep the newest 7 mails
-            date = mail.datetime.date()
-            if not reserv_mails.has_key(date):
-                num_month_mails += 1
-            reserv_m(date, mail)
 
     reserv_mids = dict.fromkeys(reserv_mails.values())
     return [m for m in mails if m.mid not in reserv_mids]
@@ -260,7 +260,49 @@ def main(flags):
 
     return 0
 
+def test_find_expired_email():
+    def mkdate(year, month, day):
+        return datetime.fromtimestamp(time.mktime((year, month, day, 0, 0, 0, 0, 0, 0)))
+
+    inputs = [
+        MyBackupEmail('0', 's', 'a', mkdate(2015, 1, 6)),
+        MyBackupEmail('1', 's', 'a', mkdate(2015, 1, 5)),
+        MyBackupEmail('2', 's', 'a', mkdate(2015, 1, 4)),
+        MyBackupEmail('3', 's', 'a', mkdate(2015, 1, 3)),
+        MyBackupEmail('4', 's', 'a', mkdate(2015, 1, 2)),
+        MyBackupEmail('5', 's', 'a', mkdate(2015, 1, 1)),
+        MyBackupEmail('6', 's', 'a', mkdate(2014, 12, 9)),
+        MyBackupEmail('7', 's', 'a', mkdate(2014, 12, 6)),
+        MyBackupEmail('8', 's', 'a', mkdate(2014, 11, 11)),
+        MyBackupEmail('9', 's', 'a', mkdate(2014, 10, 10)),
+        MyBackupEmail('10', 's', 'a', mkdate(2014, 10, 9)),
+        MyBackupEmail('11', 's', 'a', mkdate(2014, 8, 1)),
+        MyBackupEmail('12', 's', 'a', mkdate(2013, 8, 1)),
+        MyBackupEmail('13', 's', 'a', mkdate(2013, 2, 1)),
+        MyBackupEmail('14', 's', 'a', mkdate(2012, 1, 1)),
+    ]
+    expect_outputs = [
+        MyBackupEmail('7', 's', 'a', mkdate(2014, 12, 6)),
+        MyBackupEmail('10', 's', 'a', mkdate(2014, 10, 9)),
+        MyBackupEmail('13', 's', 'a', mkdate(2013, 2, 1)),
+    ]
+    outputs = find_expired_email(inputs)
+    if len(outputs) != len(expect_outputs):
+        return False
+    for i in range(len(outputs)):
+        if outputs[i].mid != expect_outputs[i].mid:
+            return False
+    return True
+
+def run_tests():
+    if not test_find_expired_email():
+        print('Test find_expired_email error.')
+        sys.exit(1)
+    sys.exit(0)
+
 if __name__ == '__main__':
+    #run_tests()
+
     try:
         sys.exit(main(parse_cmd_args()))
     except errors.HttpError as e:
