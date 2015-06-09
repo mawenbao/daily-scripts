@@ -222,7 +222,7 @@ def trash_expired_email(service, mymails):
         if exception is not None:
             logging.error('Got error when trashing gmails: %s', exception)
         elif exmails[i].mid == resp['id'] and TRASH_LABEL in resp['labelIds']:
-            logging.warn('Successfully trashed mail: %s, received at UTC %s',
+            logging.warn('Successfully trashed mail: %s, received at %s',
                 exmails[i].subject, exmails[i].datetime)
         else:
             logging.error('Failed to trash mail: %s', exmails[i].subject)
