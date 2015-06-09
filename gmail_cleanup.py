@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 # author: mwenbao@gmail.com
 # date: 2015.06.03 - 2015.06.09
-# desc: Move old gmails with given labels to trash.
+# desc: Move old gmails tagged with given labels to trash.
 #       Old gmails are defined by the function `find_expired_email'
 # depends: python2.7
 #          gmail python api: pip install --upgrade google-api-python-client
@@ -59,14 +59,14 @@ class MyBackupEmail(object):
         self.mid = msg['id']
         datestr = u''
         for header in msg['payload']['headers']:
+            if self.subject and self.sender and datestr:
+                break
             if header['name'] == u'Subject':
                 self.subject = header['value']
             if header['name'] == u'From':
                 self.sender = header['value']
             if header['name'] == u'Date':
                 datestr = header['value']
-            if self.subject and self.sender and datestr:
-                break
         if not self.subject:
             logging.error("No subject found in email %s's headers", self.mid)
             return False
@@ -87,7 +87,7 @@ def parse_cmd_args():
     parser.add_argument('--secret_file', default='client_secret.json',
         help='Location of the secret file.')
     parser.add_argument('--sender_sensitive', action='store_true',
-        help="Treat different senders' emails within the same label seperately.")
+        help="Treat different senders' emails within the same label separately.")
     parser.add_argument('label', nargs='+', help='Gmail labels')
     return parser.parse_args()
 
@@ -125,23 +125,14 @@ def lookup_label_id(service, labels):
     if not labels:
         return
 
-    labelids = []
-    def cb(reqid, resp, exception):
-        if exception is not None:
-            logging.error('Got error when requesting email label id: %s', exception)
-            return
-        mylabs = resp.get('labels', [])
-        if not mylabs:
-            logging.error('Label not found: %s', labels[int(reqid)])
-            return
-        for lab in mylabs:
-            if lab['name'] in labels:
-                labelids.append(lab['id'])
-
-    batchreq = BatchHttpRequest(callback=cb)
-    for i in range(len(labels)):
-        batchreq.add(service.users().labels().list(userId='me'), request_id=str(i))
-    batchreq.execute()
+    labelids = {}  # label name => label id
+    results = service.users().labels().list(userId='me').execute()
+    mylabs = results.get('labels', [])
+    for lab in mylabs:
+        if len(labelids) == len(labels):
+            break
+        if lab['name'] in labels:
+            labelids[lab['name']] = lab['id']
     return labelids
 
 def lookup_email_id(service, labelids):
@@ -240,15 +231,15 @@ def main(flags):
     credentials = get_credentials(flags)
     service = build('gmail', 'v1', http=credentials.authorize(Http()))
 
-    for label in flags.label:
-        # lookup label id first
-        labelids = lookup_label_id(service, [label])
-        if not labelids:
-            logging.error('Label not found: %s', label)
-            return 1
+    # lookup label id first
+    labmap = lookup_label_id(service, flags.label)
+    if len(labmap) != len(flags.label):
+        logging.error('Label(s) do not exist: %s', ' '.join([lab for lab in flags.label if lab not in labmap]))
+        return 1
 
+    for labid in labmap.values():
         # find emails with given labels
-        mailobjs = lookup_email_id(service, labelids)
+        mailobjs = lookup_email_id(service, [labid])
         if not mailobjs:
             logging.error('No email was tagged with any of the labels: %s', ' '.join(flags.label))
             return 1
