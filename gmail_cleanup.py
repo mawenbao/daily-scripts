@@ -116,7 +116,7 @@ def get_credentials(flags):
             credentials = tools.run_flow(flow, store, flags)
         else: # Needed only for compatability with Python 2.6
             credentials = tools.run(flow, store)
-        print 'Storing credentials to ' + credential_path
+        print('Storing credentials to ' + credential_path)
     return credentials
 
 def lookup_label_id(service, labels):
@@ -270,14 +270,12 @@ def main(flags):
     return 0
 
 if __name__ == '__main__':
-    ret = 0
     try:
-        ret = main(parse_cmd_args())
-    except errors.HttpError, error:
-        logging.error('Error: %s', error)
+        sys.exit(main(parse_cmd_args()))
+    except errors.HttpError as e:
+        logging.error('Error: %s', e)
         sys.exit(1)
-    except:
+    except Exception:
         logging.exception('Unknown error')
         sys.exit(1)
-    sys.exit(ret)
 
