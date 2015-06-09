@@ -148,7 +148,7 @@ def find_expired_email(mails):
     """Find all the emails which should be moved to gmail trash.
 
     Reserved mails:
-        1. (7) recent 7 mails.
+        1. (7) last 7 mails.
         2. (*) sent in the last months(one mail per month).
         3. (*) sent in the last years(one mail per year).
     """
@@ -262,7 +262,7 @@ def main(flags):
 
 def test_find_expired_email():
     def mkdate(year, month, day):
-        return datetime.fromtimestamp(time.mktime((year, month, day, 0, 0, 0, 0, 0, 0)))
+        return datetime(year=year, month=month, day=day)
 
     inputs = [
         MyBackupEmail('0', 's', 'a', mkdate(2015, 1, 6)),
