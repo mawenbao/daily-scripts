@@ -25,12 +25,11 @@ from oauth2client import tools
 
 LOGGING_FORMAT = '[%(levelname)s] [%(asctime)-15s] %(message)s'
 TRASH_LABEL = 'TRASH'
-
 SCOPES = 'https://www.googleapis.com/auth/gmail.modify'
 APPLICATION_NAME = 'gmail-cleanup'
 
 
-class MyBackupEmail(object):
+class MyEmail(object):
     def __init__(self, mid='', subject=u'', sender='', dt=None):
         self.mid = mid
         self.subject = subject
@@ -178,7 +177,7 @@ def find_expired_email(mails):
     return [m for m in mails if m.mid not in reserv_mids]
 
 def get_email_detail(service, mailobjs):
-    '''Get mail details using batch http request and return as MyBackupEmail.
+    '''Get mail details using batch http request and return as MyEmail.
     '''
     if not mailobjs:
         return
@@ -188,7 +187,7 @@ def get_email_detail(service, mailobjs):
         if exception is not None:
             logging.error('Got error when requesting mail details: %s', exception)
         else:
-            myml = MyBackupEmail()
+            myml = MyEmail()
             if myml.update(resp):
                 mymails.append(myml)
 
@@ -261,30 +260,27 @@ def main(flags):
     return 0
 
 def test_find_expired_email():
-    def mkdate(year, month, day):
-        return datetime(year=year, month=month, day=day)
-
     inputs = [
-        MyBackupEmail('0', 's', 'a', mkdate(2015, 1, 6)),
-        MyBackupEmail('1', 's', 'a', mkdate(2015, 1, 5)),
-        MyBackupEmail('2', 's', 'a', mkdate(2015, 1, 4)),
-        MyBackupEmail('3', 's', 'a', mkdate(2015, 1, 3)),
-        MyBackupEmail('4', 's', 'a', mkdate(2015, 1, 2)),
-        MyBackupEmail('5', 's', 'a', mkdate(2015, 1, 1)),
-        MyBackupEmail('6', 's', 'a', mkdate(2014, 12, 9)),
-        MyBackupEmail('7', 's', 'a', mkdate(2014, 12, 6)),
-        MyBackupEmail('8', 's', 'a', mkdate(2014, 11, 11)),
-        MyBackupEmail('9', 's', 'a', mkdate(2014, 10, 10)),
-        MyBackupEmail('10', 's', 'a', mkdate(2014, 10, 9)),
-        MyBackupEmail('11', 's', 'a', mkdate(2014, 8, 1)),
-        MyBackupEmail('12', 's', 'a', mkdate(2013, 8, 1)),
-        MyBackupEmail('13', 's', 'a', mkdate(2013, 2, 1)),
-        MyBackupEmail('14', 's', 'a', mkdate(2012, 1, 1)),
+        MyEmail('0', 's', 'a', datetime(2015, 1, 6)),
+        MyEmail('1', 's', 'a', datetime(2015, 1, 5)),
+        MyEmail('2', 's', 'a', datetime(2015, 1, 4)),
+        MyEmail('3', 's', 'a', datetime(2015, 1, 3)),
+        MyEmail('4', 's', 'a', datetime(2015, 1, 2)),
+        MyEmail('5', 's', 'a', datetime(2015, 1, 1)),
+        MyEmail('6', 's', 'a', datetime(2014, 12, 9)),
+        MyEmail('7', 's', 'a', datetime(2014, 12, 6)),
+        MyEmail('8', 's', 'a', datetime(2014, 11, 11)),
+        MyEmail('9', 's', 'a', datetime(2014, 10, 10)),
+        MyEmail('10', 's', 'a', datetime(2014, 10, 9)),
+        MyEmail('11', 's', 'a', datetime(2014, 8, 1)),
+        MyEmail('12', 's', 'a', datetime(2013, 8, 1)),
+        MyEmail('13', 's', 'a', datetime(2013, 2, 1)),
+        MyEmail('14', 's', 'a', datetime(2012, 1, 1)),
     ]
     expect_outputs = [
-        MyBackupEmail('7', 's', 'a', mkdate(2014, 12, 6)),
-        MyBackupEmail('10', 's', 'a', mkdate(2014, 10, 9)),
-        MyBackupEmail('13', 's', 'a', mkdate(2013, 2, 1)),
+        MyEmail('7', 's', 'a', datetime(2014, 12, 6)),
+        MyEmail('10', 's', 'a', datetime(2014, 10, 9)),
+        MyEmail('13', 's', 'a', datetime(2013, 2, 1)),
     ]
     outputs = find_expired_email(inputs)
     if len(outputs) != len(expect_outputs):
