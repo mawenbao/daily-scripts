@@ -18,9 +18,6 @@ import time
 import argparse
 
 now_exit = False
-sub_procs = []
-sub_cmd_pipes = []
-sub_result_pipes = {}
 
 def stdout_erase_lines(num=1):
     # cursor up + line erase + column 0
@@ -108,8 +105,6 @@ class LoadResult(object):
             self.avg_resp_time))
         self._prev_show_lines = 3
 
-result = LoadResult()
-
 class Request(object):
     def __init__(self, url, output):
         self.url = url
@@ -133,7 +128,12 @@ class Request(object):
             self.result = LoadResult()
 
         self.client.close()
-        self.run()
+        global now_exit
+        if not now_exit:
+            self.run()
+        else:
+            tornado.ioloop.IOLoop.current().stop()
+            sys.exit(0)
 
     def run(self):
         self.client = tornado.httpclient.AsyncHTTPClient(force_instance=True)
@@ -155,22 +155,8 @@ def parse_cmd_args():
     print('\n{0}\n{1}\n{2}\n{3}\n{0}\n'.format(numdeli * '=', urlstr, procstr, corstr))
     return args
 
-def exit_handler(signum, frame):
-    global now_exit
-    now_exit = True
-
-def try_exit():
-    global now_exit, sub_procs, sub_cmd_pipes
-    if now_exit:
-        print('\nWaiting for children to exit...')
-        for p in sub_cmd_pipes:
-            p.write(SubCmd(SubCmd.CmdExit).msg())
-        for p in sub_procs:
-            p.join()
-        tornado.ioloop.IOLoop.current().stop()
-        print('Bye')
-
 def start_worker(url, num_coroutines, pipe_in, pipe_out):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     # clear loop instance inited in parent process
     tornado.ioloop.IOLoop.clear_instance()
     loop = tornado.ioloop.IOLoop.instance()
@@ -182,8 +168,6 @@ def start_worker(url, num_coroutines, pipe_in, pipe_out):
         if cmd.cmd == SubCmd.CmdExit:
             global now_exit
             now_exit = True
-            tornado.ioloop.IOLoop.current().stop()
-            sys.exit(0)
 
     def process_cmd_len(data):
         strlen = struct.unpack('<I', data)[0]
@@ -201,9 +185,9 @@ def start_worker(url, num_coroutines, pipe_in, pipe_out):
     loop.start()
 
 def main():
-    global result, sub_procs, sub_cmd_pipes, sub_result_pipes
-
-    signal.signal(signal.SIGINT, exit_handler)
+    sub_procs = []
+    sub_cmd_pipes = []
+    sub_result_pipes = {}
 
     args = parse_cmd_args()
 
@@ -219,6 +203,12 @@ def main():
         sub_cmd_pipes.append(tornado.iostream.PipeIOStream(cmd_pipe_w))
         sub_result_pipes[res_pipe_r] = tornado.iostream.PipeIOStream(res_pipe_r)
 
+    def exit_handler(signum, frame):
+        global now_exit
+        now_exit = True
+    signal.signal(signal.SIGINT, exit_handler)
+
+    result = LoadResult()
     def process_cmd(data):
         cmd = SubCmd.load(data)
         if cmd.cmd == SubCmd.CmdResult:
@@ -237,6 +227,17 @@ def main():
     for fd in sub_result_pipes.keys():
         loop.add_handler(fd, on_cmd_read, tornado.ioloop.IOLoop.READ)
 
+    def try_exit():
+        global now_exit
+        if not now_exit:
+            return
+        print('\nWaiting for children to exit...')
+        for p in sub_cmd_pipes:
+            p.write(SubCmd(SubCmd.CmdExit).msg())
+        for p in sub_procs:
+            p.join()
+        tornado.ioloop.IOLoop.current().stop()
+        print('Bye')
     tornado.ioloop.PeriodicCallback(try_exit, 1000).start()
     loop.start()
 
