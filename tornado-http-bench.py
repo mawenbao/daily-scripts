@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# pip install tornado
 
 import tornado
 import tornado.iostream
@@ -18,11 +17,19 @@ except ImportError:
 import time
 import argparse
 
+now_exit = False
+sub_procs = []
+sub_cmd_pipes = []
+sub_result_pipes = {}
+
+def stdout_erase_lines(num=1):
+    # cursor up + line erase + column 0
+    sys.stdout.write('\x1b[1A\x1b[2K' * num + '\r')
+    sys.stdout.flush()
+
 class SubCmd(object):
-    CmdInvalid = -1
     CmdResult = 0
     CmdExit = 1
-    CmdWillExit = 2
 
     def __init__(self, cmd, result=None):
         self.cmd = cmd
@@ -39,6 +46,8 @@ class SubCmd(object):
 
 class LoadResult(object):
     def __init__(self):
+        self._prev_show_lines = 0
+        self.begin_time = time.time()
         self.num_requests = 0
         self.num_errors = 0
         self.status_map = {}
@@ -68,78 +77,63 @@ class LoadResult(object):
         self.max_resp_time = max(self.max_resp_time, other.max_resp_time)
         self.min_resp_time = min(self.min_resp_time, other.min_resp_time)
 
-good_size = 400
-now_exit = False
-first_show = True
-sub_cmd_pipes = []
-sub_result_pipes = {}
-sub_procs = []
+    def _readable_elaps_time(self):
+        elaps_time = time.time() - self.begin_time
+        if elaps_time > 24 * 3600:
+            return '{:.2f}d'.format(elaps_time / 24 * 3600)
+        elif elaps_time > 3600:
+            return '{:.2f}h'.format(elaps_time / 3600)
+        elif elaps_time > 60:
+            return '{:.2f}m'.format(elaps_time / 60)
+        else:
+            return '{:.2f}s'.format(elaps_time)
+
+    def show(self):
+        if self._prev_show_lines > 0:
+            stdout_erase_lines(self._prev_show_lines)
+        req_rate = self.num_requests / (time.time() - self.begin_time)
+        status_line = ''
+        for k, v in self.status_map.items():
+            status_line += ('{} ({}) | '.format(k, v))
+        print('{:<25}total {} | rate: {:.2f} #/s | errors: {}'.format(
+            'requests (elaps {}):'.format(self._readable_elaps_time()),
+            self.num_requests,
+            req_rate,
+            self.num_errors))
+        print('{:<25}{}'.format('response status:', status_line[:-3]))
+        print('{:<25}min {:4.2f} | max {:4.2f} | avg {:4.2f}'.format(
+            'response time(ms):',
+            self.min_resp_time,
+            self.max_resp_time,
+            self.avg_resp_time))
+        self._prev_show_lines = 3
+
 result = LoadResult()
-begin_time = time.time()
-
-def stdout_erase_lines(num=1):
-    # cursor up + line erase + column 0
-    sys.stdout.write('\x1b[1A\x1b[2K' * num + '\r')
-    sys.stdout.flush()
-
-def readable_elaps_time(begin_time):
-    elaps_time = time.time() - begin_time
-    if elaps_time > 24 * 3600:
-        return '{:.2f}d'.format(elaps_time / 24 * 3600)
-    elif elaps_time > 3600:
-        return '{:.2f}h'.format(elaps_time / 3600)
-    elif elaps_time > 60:
-        return '{:.2f}m'.format(elaps_time / 60)
-    else:
-        return '{:.2f}s'.format(elaps_time)
-
-def show_result():
-    global now_exit, begin_time, result, first_show
-    if now_exit:
-        return
-    if not first_show:
-        stdout_erase_lines(3)
-    req_rate = result.num_requests / (time.time() - begin_time)
-    status_line = ''
-    for k, v in result.status_map.items():
-        status_line += ('{} ({}) | '.format(k, v))
-    print('{:<25}total {} | rate: {:.2f} #/s | errors: {}'.format(
-        'requests (elaps {}):'.format(readable_elaps_time(begin_time)),
-        result.num_requests,
-        req_rate,
-        result.num_errors))
-    print('{:<25}{}'.format('response status:', status_line[:-3]))
-    print('{:<25}min {:4.2f} | max {:4.2f} | avg {:4.2f}'.format(
-        'response time(ms):',
-        result.min_resp_time,
-        result.max_resp_time,
-        result.avg_resp_time))
-    first_show = False
 
 class Request(object):
     def __init__(self, url, output):
         self.url = url
         self.output = output
         self.client = None
+        self.result = LoadResult()
 
     def handle_response(self, response):
-        global now_exit, good_size, result
-        result.num_requests += 1
-        if response.body is None or len(response.body) < good_size:
-            result.num_errors += 1
-        result.new_status(response.code)
+        self.result.num_requests += 1
+        if response.body is None or response.error:
+            self.result.num_errors += 1
+        self.result.new_status(response.code)
         resp_time = response.request_time * 1000
-        result.total_resp_time += resp_time
-        result.avg_resp_time = result.total_resp_time / result.num_requests
-        result.min_resp_time = min(result.min_resp_time, resp_time)
-        result.max_resp_time = max(result.max_resp_time, resp_time)
+        self.result.total_resp_time += resp_time
+        self.result.avg_resp_time = self.result.total_resp_time / self.result.num_requests
+        self.result.min_resp_time = min(self.result.min_resp_time, resp_time)
+        self.result.max_resp_time = max(self.result.max_resp_time, resp_time)
 
-        if result.num_requests % 10 == 0:
-            self.output.write(SubCmd(SubCmd.CmdResult, result).msg())
+        if self.result.num_requests % 10 == 0:
+            self.output.write(SubCmd(SubCmd.CmdResult, self.result).msg())
+            self.result = LoadResult()
 
         self.client.close()
-        if not now_exit:
-            self.run()
+        self.run()
 
     def run(self):
         self.client = tornado.httpclient.AsyncHTTPClient(force_instance=True)
@@ -166,7 +160,7 @@ def exit_handler(signum, frame):
     now_exit = True
 
 def try_exit():
-    global now_exit, sub_procs
+    global now_exit, sub_procs, sub_cmd_pipes
     if now_exit:
         print('\nWaiting for children to exit...')
         for p in sub_cmd_pipes:
@@ -206,7 +200,9 @@ def start_worker(url, num_coroutines, pipe_in, pipe_out):
         r.run()
     loop.start()
 
-if __name__ == '__main__':
+def main():
+    global result, sub_procs, sub_cmd_pipes, sub_result_pipes
+
     signal.signal(signal.SIGINT, exit_handler)
 
     args = parse_cmd_args()
@@ -223,20 +219,19 @@ if __name__ == '__main__':
         sub_cmd_pipes.append(tornado.iostream.PipeIOStream(cmd_pipe_w))
         sub_result_pipes[res_pipe_r] = tornado.iostream.PipeIOStream(res_pipe_r)
 
-        def process_cmd(data):
-            cmd = SubCmd.load(data)
-            if cmd.cmd == SubCmd.CmdResult:
-                global result
-                result.update(cmd.result)
-                show_result()
+    def process_cmd(data):
+        cmd = SubCmd.load(data)
+        if cmd.cmd == SubCmd.CmdResult:
+            result.update(cmd.result)
+            result.show()
 
-        def process_cmd_len(stream, data):
-            strlen = struct.unpack('<I', data)[0]
-            stream.read_bytes(strlen, process_cmd)
+    def process_cmd_len(stream, data):
+        strlen = struct.unpack('<I', data)[0]
+        stream.read_bytes(strlen, process_cmd)
 
-        def on_cmd_read(fd, evs):
-            stream = sub_result_pipes[fd]
-            stream.read_bytes(4, functools.partial(process_cmd_len, stream))
+    def on_cmd_read(fd, evs):
+        stream = sub_result_pipes[fd]
+        stream.read_bytes(4, functools.partial(process_cmd_len, stream))
 
     loop = tornado.ioloop.IOLoop.instance()
     for fd in sub_result_pipes.keys():
@@ -244,3 +239,6 @@ if __name__ == '__main__':
 
     tornado.ioloop.PeriodicCallback(try_exit, 1000).start()
     loop.start()
+
+if __name__ == '__main__':
+    main()
